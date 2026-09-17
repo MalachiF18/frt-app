@@ -238,27 +238,50 @@ class RangeScreen extends StatefulWidget {
   State<RangeScreen> createState() => _RangeScreenState();
 }
 
-class _RangeScreenState extends State<RangeScreen> {
+class _RangeScreenState extends State<RangeScreen>
+    with SingleTickerProviderStateMixin {
   final _random = math.Random();
   final List<Offset> _hits = [];
 
   Timer? _fireTimer;
 
   late int _rounds;
+  late AnimationController _reloadController;
 
   bool _rapidFire = false;
   bool _firing = false;
+  bool _reloading = false;
 
   int _shot = 0;
 
   @override
   void initState() {
     super.initState();
+
     _rounds = widget.weapon.capacity;
+
+    _reloadController = AnimationController(
+      vsync: this,
+      duration: _reloadDuration(),
+    );
+  }
+
+  Duration _reloadDuration() {
+    switch (widget.weapon.type) {
+      case WeaponType.glock19x:
+      case WeaponType.glock17:
+        return const Duration(milliseconds: 900);
+
+      case WeaponType.riflePistol:
+        return const Duration(milliseconds: 1100);
+
+      case WeaponType.dp12:
+        return const Duration(milliseconds: 950);
+    }
   }
 
   void _pressStart() {
-    if (_rounds == 0) {
+    if (_rounds == 0 || _reloading) {
       return;
     }
 
@@ -273,7 +296,7 @@ class _RangeScreenState extends State<RangeScreen> {
   }
 
   void _fire() {
-    if (_rounds == 0) {
+    if (_rounds == 0 || _reloading) {
       _pressEnd();
       return;
     }
@@ -308,12 +331,30 @@ class _RangeScreenState extends State<RangeScreen> {
     _fireTimer = null;
   }
 
-  void _reload() {
+  Future<void> _reload() async {
+    if (_reloading) {
+      return;
+    }
+
     _pressEnd();
 
     setState(() {
-      _rounds = widget.weapon.capacity;
+      _reloading = true;
+      _firing = false;
     });
+
+    await _reloadController.forward(from: 0);
+
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _rounds = widget.weapon.capacity;
+      _reloading = false;
+    });
+
+    _reloadController.reset();
   }
 
   double _recoilX() {
@@ -372,9 +413,56 @@ class _RangeScreenState extends State<RangeScreen> {
     }
   }
 
+  double _reloadAngle(double progress) {
+    final wave = math.sin(math.pi * progress);
+
+    switch (widget.weapon.type) {
+      case WeaponType.glock19x:
+      case WeaponType.glock17:
+        return -.10 * wave;
+
+      case WeaponType.riflePistol:
+        return -.14 * wave;
+
+      case WeaponType.dp12:
+        return .055 * math.sin(math.pi * 2 * progress);
+    }
+  }
+
+  double _reloadY(double progress) {
+    final wave = math.sin(math.pi * progress);
+
+    switch (widget.weapon.type) {
+      case WeaponType.glock19x:
+      case WeaponType.glock17:
+        return 7 * wave;
+
+      case WeaponType.riflePistol:
+        return 11 * wave;
+
+      case WeaponType.dp12:
+        return 13 * wave;
+    }
+  }
+
+  double _reloadX(double progress) {
+    switch (widget.weapon.type) {
+      case WeaponType.glock19x:
+      case WeaponType.glock17:
+        return 0;
+
+      case WeaponType.riflePistol:
+        return -5 * math.sin(math.pi * progress);
+
+      case WeaponType.dp12:
+        return -8 * math.sin(math.pi * progress);
+    }
+  }
+
   @override
   void dispose() {
     _fireTimer?.cancel();
+    _reloadController.dispose();
     super.dispose();
   }
 
@@ -400,36 +488,63 @@ class _RangeScreenState extends State<RangeScreen> {
 
                 Align(
                   alignment: const Alignment(0, .72),
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTapDown: (_) => _pressStart(),
-                    onTapUp: (_) => _pressEnd(),
-                    onTapCancel: _pressEnd,
-                    child: AnimatedContainer(
-                      key: const Key('fire-control'),
-                      duration: const Duration(milliseconds: 70),
-                      curve: Curves.easeOutCubic,
-                      transformAlignment: Alignment.center,
-                      transform: Matrix4.identity()
-                        ..translate(
-                          _firing ? _recoilX() : 0.0,
-                          _firing ? _recoilY() : 0.0,
-                        )
-                        ..rotateZ(
-                          _firing ? _recoilAngle() : 0.0,
-                        )
-                        ..scale(
-                          _firing ? _recoilScale() : 1.0,
+                  child: AnimatedBuilder(
+                    animation: _reloadController,
+                    builder: (context, child) {
+                      final progress = _reloadController.value;
+
+                      return Transform(
+                        alignment: Alignment.center,
+                        transform: Matrix4.identity()
+                          ..translate(
+                            _reloading ? _reloadX(progress) : 0.0,
+                            _reloading ? _reloadY(progress) : 0.0,
+                          )
+                          ..rotateZ(
+                            _reloading
+                                ? _reloadAngle(progress)
+                                : 0.0,
+                          ),
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTapDown: (_) => _pressStart(),
+                          onTapUp: (_) => _pressEnd(),
+                          onTapCancel: _pressEnd,
+                          child: AnimatedContainer(
+                            key: const Key('fire-control'),
+                            duration:
+                                const Duration(milliseconds: 70),
+                            curve: Curves.easeOutCubic,
+                            transformAlignment: Alignment.center,
+                            transform: Matrix4.identity()
+                              ..translate(
+                                _firing ? _recoilX() : 0.0,
+                                _firing ? _recoilY() : 0.0,
+                              )
+                              ..rotateZ(
+                                _firing
+                                    ? _recoilAngle()
+                                    : 0.0,
+                              )
+                              ..scale(
+                                _firing
+                                    ? _recoilScale()
+                                    : 1.0,
+                              ),
+                            child: CustomPaint(
+                              size: const Size(360, 160),
+                              painter: WeaponPainter(
+                                weapon: widget.weapon,
+                                firing: _firing,
+                                shot: _shot,
+                                reloading: _reloading,
+                                reloadProgress: progress,
+                              ),
+                            ),
+                          ),
                         ),
-                      child: CustomPaint(
-                        size: const Size(360, 160),
-                        painter: WeaponPainter(
-                          weapon: widget.weapon,
-                          firing: _firing,
-                          shot: _shot,
-                        ),
-                      ),
-                    ),
+                      );
+                    },
                   ),
                 ),
 
@@ -455,6 +570,32 @@ class _RangeScreenState extends State<RangeScreen> {
                     ),
                   ),
                 ),
+
+                if (_reloading)
+                  Positioned(
+                    top: 16,
+                    right: 16,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.black87,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: widget.weapon.accent,
+                        ),
+                      ),
+                      child: const Text(
+                        'RELOADING...',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 1,
+                        ),
+                      ),
+                    ),
+                  ),
               ],
             ),
           ),
@@ -484,27 +625,43 @@ class _RangeScreenState extends State<RangeScreen> {
                         ),
                         subtitle: Text(
                           _rapidFire
-                              ? 'ON — hold to fire'
-                              : 'OFF — single shot',
+                              ? 'ON - hold to fire'
+                              : 'OFF - single shot',
                         ),
                         value: _rapidFire,
-                        activeThumbColor: widget.weapon.accent,
-                        onChanged: (value) {
-                          _pressEnd();
+                        activeThumbColor:
+                            widget.weapon.accent,
+                        onChanged: _reloading
+                            ? null
+                            : (value) {
+                                _pressEnd();
 
-                          setState(() {
-                            _rapidFire = value;
-                          });
-                        },
+                                setState(() {
+                                  _rapidFire = value;
+                                });
+                              },
                       ),
                     ),
                   ),
 
                   FilledButton.icon(
                     key: const Key('reload-button'),
-                    onPressed: _reload,
-                    icon: const Icon(Icons.refresh),
-                    label: const Text('RELOAD'),
+                    onPressed: _reloading ? null : _reload,
+                    icon: _reloading
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child:
+                                CircularProgressIndicator(
+                              strokeWidth: 2,
+                            ),
+                          )
+                        : const Icon(Icons.refresh),
+                    label: Text(
+                      _reloading
+                          ? 'RELOADING'
+                          : 'RELOAD',
+                    ),
                   ),
                 ],
               ),
@@ -618,8 +775,7 @@ class RangePainter extends CustomPainter {
       canvas.drawCircle(
         point,
         4,
-        Paint()
-          ..color = Colors.black,
+        Paint()..color = Colors.black,
       );
 
       canvas.drawCircle(
@@ -646,11 +802,16 @@ class WeaponPainter extends CustomPainter {
     required this.weapon,
     this.firing = false,
     this.shot = 0,
+    this.reloading = false,
+    this.reloadProgress = 0,
   });
 
   final WeaponSpec weapon;
   final bool firing;
   final int shot;
+
+  final bool reloading;
+  final double reloadProgress;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -753,9 +914,39 @@ class WeaponPainter extends CustomPainter {
     canvas.restore();
   }
 
-  // =========================================================
-  // GLOCK 19X / GLOCK 17
-  // =========================================================
+  double _dropAmount(double maxDrop) {
+    if (!reloading) {
+      return 0;
+    }
+
+    final p = reloadProgress;
+
+    if (p < .38) {
+      return maxDrop * (p / .38);
+    }
+
+    if (p < .62) {
+      return maxDrop;
+    }
+
+    return maxDrop *
+        (1 - ((p - .62) / .38));
+  }
+
+  double _pumpOffset() {
+    if (!reloading) {
+      return 0;
+    }
+
+    final p = reloadProgress;
+
+    if (p < .45) {
+      return -30 * (p / .45);
+    }
+
+    return -30 *
+        (1 - ((p - .45) / .55));
+  }
 
   void _drawGlock(
     Canvas canvas, {
@@ -780,7 +971,6 @@ class WeaponPainter extends CustomPainter {
       ..color = Colors.black.withOpacity(.35)
       ..strokeWidth = 2;
 
-    // Main squared Glock slide
     final slideShape = RRect.fromRectAndRadius(
       const Rect.fromLTWH(
         65,
@@ -796,7 +986,6 @@ class WeaponPainter extends CustomPainter {
       slide,
     );
 
-    // Top of slide
     canvas.drawRRect(
       RRect.fromRectAndRadius(
         const Rect.fromLTWH(
@@ -810,7 +999,6 @@ class WeaponPainter extends CustomPainter {
       slide,
     );
 
-    // Muzzle
     canvas.drawRRect(
       RRect.fromRectAndRadius(
         const Rect.fromLTWH(
@@ -824,7 +1012,6 @@ class WeaponPainter extends CustomPainter {
       black,
     );
 
-    // Barrel opening
     canvas.drawOval(
       const Rect.fromLTWH(
         288,
@@ -836,7 +1023,6 @@ class WeaponPainter extends CustomPainter {
         ..color = const Color(0xFF363A3D),
     );
 
-    // Rear sight
     canvas.drawRect(
       const Rect.fromLTWH(
         78,
@@ -847,7 +1033,6 @@ class WeaponPainter extends CustomPainter {
       black,
     );
 
-    // Front sight
     canvas.drawRect(
       const Rect.fromLTWH(
         259,
@@ -858,7 +1043,6 @@ class WeaponPainter extends CustomPainter {
       black,
     );
 
-    // Ejection port
     canvas.drawRRect(
       RRect.fromRectAndRadius(
         const Rect.fromLTWH(
@@ -873,7 +1057,6 @@ class WeaponPainter extends CustomPainter {
         ..color = Colors.black.withOpacity(.28),
     );
 
-    // Glock rear slide serrations
     for (double x = 78; x <= 108; x += 7) {
       canvas.drawLine(
         Offset(x, 48),
@@ -884,7 +1067,6 @@ class WeaponPainter extends CustomPainter {
       );
     }
 
-    // Polymer lower frame
     final lowerFrame = Path()
       ..moveTo(88, 76)
       ..lineTo(267, 76)
@@ -903,7 +1085,6 @@ class WeaponPainter extends CustomPainter {
       frame,
     );
 
-    // Trigger guard
     final triggerGuard = Path()
       ..moveTo(174, 81)
       ..quadraticBezierTo(
@@ -933,7 +1114,6 @@ class WeaponPainter extends CustomPainter {
         ..strokeWidth = 4,
     );
 
-    // Trigger
     final trigger = Path()
       ..moveTo(190, 88)
       ..quadraticBezierTo(
@@ -951,7 +1131,6 @@ class WeaponPainter extends CustomPainter {
         ..strokeWidth = 3,
     );
 
-    // Glock grip
     final grip = Path()
       ..moveTo(118, 88)
       ..lineTo(168, 88)
@@ -966,14 +1145,12 @@ class WeaponPainter extends CustomPainter {
       frame,
     );
 
-    // Back strap
     canvas.drawLine(
       const Offset(119, 94),
       const Offset(123, 141),
       detail,
     );
 
-    // Grip texture lines
     for (double y = 103; y <= 135; y += 8) {
       canvas.drawLine(
         Offset(124, y),
@@ -984,7 +1161,6 @@ class WeaponPainter extends CustomPainter {
       );
     }
 
-    // Grip dots
     for (double y = 106; y <= 134; y += 9) {
       for (double x = 128; x <= 157; x += 9) {
         canvas.drawCircle(
@@ -996,7 +1172,31 @@ class WeaponPainter extends CustomPainter {
       }
     }
 
-    // Magazine base
+    final magazineDrop = _dropAmount(35);
+
+    canvas.save();
+
+    canvas.translate(
+      0,
+      magazineDrop,
+    );
+
+    final magazine = RRect.fromRectAndRadius(
+      const Rect.fromLTWH(
+        122,
+        125,
+        43,
+        25,
+      ),
+      const Radius.circular(2),
+    );
+
+    canvas.drawRRect(
+      magazine,
+      Paint()
+        ..color = frameColor.withOpacity(.9),
+    );
+
     canvas.drawRRect(
       RRect.fromRectAndRadius(
         const Rect.fromLTWH(
@@ -1010,7 +1210,8 @@ class WeaponPainter extends CustomPainter {
       black,
     );
 
-    // Accessory rail
+    canvas.restore();
+
     canvas.drawLine(
       const Offset(222, 82),
       const Offset(258, 82),
@@ -1025,7 +1226,6 @@ class WeaponPainter extends CustomPainter {
       );
     }
 
-    // Cartoon outline
     canvas.drawRRect(
       slideShape,
       outline,
@@ -1042,10 +1242,6 @@ class WeaponPainter extends CustomPainter {
     );
   }
 
-  // =========================================================
-  // AR PISTOL
-  // =========================================================
-
   void _drawArPistol(Canvas canvas) {
     final body = Paint()
       ..color = const Color(0xFF292D31);
@@ -1061,7 +1257,6 @@ class WeaponPainter extends CustomPainter {
       ..style = PaintingStyle.stroke
       ..strokeWidth = 2;
 
-    // Rear brace
     final brace = Path()
       ..moveTo(33, 66)
       ..lineTo(65, 55)
@@ -1078,7 +1273,6 @@ class WeaponPainter extends CustomPainter {
       darker,
     );
 
-    // Buffer tube
     canvas.drawRect(
       const Rect.fromLTWH(
         82,
@@ -1089,7 +1283,6 @@ class WeaponPainter extends CustomPainter {
       darker,
     );
 
-    // Main receiver
     final receiver = RRect.fromRectAndRadius(
       const Rect.fromLTWH(
         112,
@@ -1105,7 +1298,6 @@ class WeaponPainter extends CustomPainter {
       body,
     );
 
-    // Upper handguard
     canvas.drawRRect(
       RRect.fromRectAndRadius(
         const Rect.fromLTWH(
@@ -1119,7 +1311,6 @@ class WeaponPainter extends CustomPainter {
       body,
     );
 
-    // Barrel
     canvas.drawRect(
       const Rect.fromLTWH(
         277,
@@ -1130,7 +1321,6 @@ class WeaponPainter extends CustomPainter {
       darker,
     );
 
-    // Muzzle device
     canvas.drawRect(
       const Rect.fromLTWH(
         320,
@@ -1141,7 +1331,6 @@ class WeaponPainter extends CustomPainter {
       accent,
     );
 
-    // Rail
     canvas.drawRect(
       const Rect.fromLTWH(
         118,
@@ -1152,7 +1341,6 @@ class WeaponPainter extends CustomPainter {
       darker,
     );
 
-    // Rail notches
     for (double x = 125; x < 267; x += 13) {
       canvas.drawRect(
         Rect.fromLTWH(
@@ -1165,7 +1353,6 @@ class WeaponPainter extends CustomPainter {
       );
     }
 
-    // Cartoon optic
     canvas.drawRRect(
       RRect.fromRectAndRadius(
         const Rect.fromLTWH(
@@ -1189,7 +1376,21 @@ class WeaponPainter extends CustomPainter {
       darker,
     );
 
-    // Magazine
+    final magazineDrop = _dropAmount(48);
+
+    canvas.save();
+
+    canvas.translate(
+      0,
+      magazineDrop,
+    );
+
+    canvas.rotate(
+      reloading
+          ? .12 * math.sin(math.pi * reloadProgress)
+          : 0,
+    );
+
     final magazine = Path()
       ..moveTo(162, 84)
       ..lineTo(193, 84)
@@ -1204,7 +1405,6 @@ class WeaponPainter extends CustomPainter {
       darker,
     );
 
-    // Magazine accent
     canvas.drawLine(
       const Offset(160, 93),
       const Offset(185, 99),
@@ -1213,7 +1413,13 @@ class WeaponPainter extends CustomPainter {
         ..strokeWidth = 3,
     );
 
-    // Pistol grip
+    canvas.drawPath(
+      magazine,
+      outline,
+    );
+
+    canvas.restore();
+
     final grip = Path()
       ..moveTo(129, 83)
       ..lineTo(153, 83)
@@ -1226,7 +1432,6 @@ class WeaponPainter extends CustomPainter {
       accent,
     );
 
-    // Forward grip
     final forwardGrip = Path()
       ..moveTo(225, 80)
       ..lineTo(243, 80)
@@ -1239,7 +1444,6 @@ class WeaponPainter extends CustomPainter {
       accent,
     );
 
-    // Ejection port
     canvas.drawRRect(
       RRect.fromRectAndRadius(
         const Rect.fromLTWH(
@@ -1253,14 +1457,12 @@ class WeaponPainter extends CustomPainter {
       darker,
     );
 
-    // Small controls
     canvas.drawCircle(
       const Offset(145, 72),
       4,
       accent,
     );
 
-    // Outlines
     canvas.drawPath(
       brace,
       outline,
@@ -1272,19 +1474,10 @@ class WeaponPainter extends CustomPainter {
     );
 
     canvas.drawPath(
-      magazine,
-      outline,
-    );
-
-    canvas.drawPath(
       grip,
       outline,
     );
   }
-
-  // =========================================================
-  // DP-12
-  // =========================================================
 
   void _drawDp12(Canvas canvas) {
     final body = Paint()
@@ -1301,7 +1494,6 @@ class WeaponPainter extends CustomPainter {
       ..style = PaintingStyle.stroke
       ..strokeWidth = 2;
 
-    // Stock
     final stock = Path()
       ..moveTo(26, 70)
       ..lineTo(66, 54)
@@ -1318,7 +1510,6 @@ class WeaponPainter extends CustomPainter {
       dark,
     );
 
-    // Main receiver
     final receiver = RRect.fromRectAndRadius(
       const Rect.fromLTWH(
         92,
@@ -1334,7 +1525,6 @@ class WeaponPainter extends CustomPainter {
       body,
     );
 
-    // Top rail
     canvas.drawRect(
       const Rect.fromLTWH(
         111,
@@ -1357,7 +1547,15 @@ class WeaponPainter extends CustomPainter {
       );
     }
 
-    // Pump section
+    final pumpMovement = _pumpOffset();
+
+    canvas.save();
+
+    canvas.translate(
+      pumpMovement,
+      0,
+    );
+
     canvas.drawRRect(
       RRect.fromRectAndRadius(
         const Rect.fromLTWH(
@@ -1371,7 +1569,6 @@ class WeaponPainter extends CustomPainter {
       accent,
     );
 
-    // Pump grooves
     for (double x = 194; x <= 231; x += 9) {
       canvas.drawLine(
         Offset(x, 62),
@@ -1382,7 +1579,8 @@ class WeaponPainter extends CustomPainter {
       );
     }
 
-    // Top barrel
+    canvas.restore();
+
     canvas.drawRect(
       const Rect.fromLTWH(
         241,
@@ -1393,7 +1591,6 @@ class WeaponPainter extends CustomPainter {
       dark,
     );
 
-    // Bottom barrel
     canvas.drawRect(
       const Rect.fromLTWH(
         241,
@@ -1404,7 +1601,6 @@ class WeaponPainter extends CustomPainter {
       dark,
     );
 
-    // Barrel tips
     canvas.drawRRect(
       RRect.fromRectAndRadius(
         const Rect.fromLTWH(
@@ -1431,7 +1627,6 @@ class WeaponPainter extends CustomPainter {
       body,
     );
 
-    // Receiver detail
     canvas.drawRRect(
       RRect.fromRectAndRadius(
         const Rect.fromLTWH(
@@ -1446,7 +1641,6 @@ class WeaponPainter extends CustomPainter {
         ..color = Colors.white.withOpacity(.09),
     );
 
-    // Pistol grip
     final grip = Path()
       ..moveTo(155, 90)
       ..lineTo(185, 90)
@@ -1459,7 +1653,6 @@ class WeaponPainter extends CustomPainter {
       dark,
     );
 
-    // Trigger guard
     canvas.drawOval(
       const Rect.fromLTWH(
         168,
@@ -1473,7 +1666,6 @@ class WeaponPainter extends CustomPainter {
         ..strokeWidth = 3,
     );
 
-    // Trigger
     canvas.drawLine(
       const Offset(187, 88),
       const Offset(184, 101),
@@ -1482,7 +1674,6 @@ class WeaponPainter extends CustomPainter {
         ..strokeWidth = 3,
     );
 
-    // Outlines
     canvas.drawPath(
       stock,
       outline,
@@ -1498,10 +1689,6 @@ class WeaponPainter extends CustomPainter {
       outline,
     );
   }
-
-  // =========================================================
-  // MUZZLE FLASH
-  // =========================================================
 
   void _drawFlash(
     Canvas canvas,
@@ -1632,10 +1819,6 @@ class WeaponPainter extends CustomPainter {
     );
   }
 
-  // =========================================================
-  // SHELL CASING
-  // =========================================================
-
   void _drawCasing(
     Canvas canvas,
     Offset position,
@@ -1685,6 +1868,8 @@ class WeaponPainter extends CustomPainter {
   ) {
     return oldDelegate.weapon.type != weapon.type ||
         oldDelegate.firing != firing ||
-        oldDelegate.shot != shot;
+        oldDelegate.shot != shot ||
+        oldDelegate.reloading != reloading ||
+        oldDelegate.reloadProgress != reloadProgress;
   }
 }
