@@ -2,7 +2,8 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
-
+//lebron de goat 
+//ba boom boom boom 
 void main() => runApp(const GunRangeApp());
 
 class GunRangeApp extends StatelessWidget {
